@@ -1227,3 +1227,27 @@ defimpl Inspect, for: JOSE.JWK do
   # Fallback pattern match to just redact the entire kty value
   defp reject(_), do: :redacted
 end
+
+defmodule RSAPrivateKey do
+  # Another options would be to create structs from the internal record types
+  # but this seems like a very big refactor of the elixir side of things.
+  require Record
+
+  record = Record.extract(:RSAPrivateKey, from_lib: "public_key/include/public_key.hrl")
+  keys = :lists.map(&elem(&1, 0), record)
+  vals = :lists.map(&{&1, [], nil}, keys)
+  pairs = :lists.zip(keys, vals)
+
+  @derive {Inspect, only: [:publicExponent]}
+  defstruct keys
+
+  def to_record(%__MODULE__{unquote_splicing(pairs)}) do
+    {:RSAPrivateKey, unquote_splicing(vals)}
+  end
+
+  def from_record({:RSAPrivateKey, unquote_splicing(vals)}) do
+    %__MODULE__{unquote_splicing(pairs)}
+  end
+
+  def demo, do: %__MODULE__{} |> IO.inspect(label: "RSA protected secrets")
+end
