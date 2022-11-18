@@ -10,7 +10,6 @@ defmodule JOSE.JWK do
   vals = :lists.map(&{&1, [], nil}, keys)
   pairs = :lists.zip(keys, vals)
 
-  @derive {Inspect, except: [:kty]}
   defstruct keys
   @type t :: %__MODULE__{}
 
@@ -1133,4 +1132,98 @@ defmodule JOSE.JWK do
         {class, reason}
     end
   end
+
+  @doc """
+  Convert an integer to a binary
+
+  These functions were transposed from [jose_jwk_kty_rsa.erl#L470-L484](https://github.com/potatosalad/erlang-jose/blob/991649695aaccd92c8effb1c1e88e6159fe8e9a6/src/jwk/jose_jwk_kty_rsa.erl#L470-L484)
+  So I can check the order of the attributes in the RSAPrivateKey record
+  match what I am expecting.
+
+  ## Examples
+
+   iex> jwk = %JOSE.JWK{kty: {:jose_jwk_kty_rsa, {:RSAPrivateKey, version, n, e, d, p, q, dp, dq, qi, other}}} = {:rsa, 1024} |> JOSE.JWK.generate_key()
+   iex> d_result = :jose_jwa_base64url.encode(JOSE.JWK.int_to_bin(d))
+   iex> {%{kty: :jose_jwk_kty_rsa}, %{"d" => d_expected}}= JOSE.JWK.to_map(jwk)
+   iex> d_expected == d_result
+   true
+
+   To see how the RSA 'two-prime' map is calculated see [jose_jwk_kty_rsa.erl#L72-L93](https://github.com/potatosalad/erlang-jose/blob/991649695aaccd92c8effb1c1e88e6159fe8e9a6/src/jwk/jose_jwk_kty_rsa.erl#L72-L93)
+
+  Record mapping
+
+  RSAPrivateKey Record Key | `JOSE.JWK.to_map/1` key     | Example Value
+  :----------------------  | :-------------------------- | :-----------
+  `:version`               | N/A                         | `:"two-prime"`
+  `:modulus`               | `"n"`                       | `161572291234011613982854276662465417277773991457500003407184544627631944190223143542902606910786293292158769603428043658884851420961878404245878184356617480576466300494434175987496544391205002411242797751047296970184558210453649271466717599580169532984635560306064621436898685182937180679492823245339657195637`
+  `:publicExponent`        | `"e"`                       | `65537`
+  `:privateExponent`       | `"d"`                       | `160041302741155346343454357444201062422814233630698234908231867480161668813838375058837994266148939001690322834065259046953156458842505737064946949291151238516586029704048379662942790022509543873671774283750595666745073897193141463541153812672596046557740579573370901511843176492513476147479423596912055967361`
+  `:prime1`                | `"p"`                       | `12872705546387335925669320163235038697267377851745511213607961455351066538719038865384201682204477028226863506874027920570566972356075332823097752823162589`
+  `:prime2`                | `"q"`                       | `12551540983500249112078446859471139378394699454120112416035039174274749318450386805363737537068121036312993053637907750893934008824753932645038356052531833`
+  `:exponent1`             | `"dp"`                      | `7171057674184891699501979184881029461198020934577061337833789535276440610069020399717897053810874037925668855340706552819183508457023579444260125697252589`
+  `:exponent2`             | `"dq"`                      | `11362020238752701204253565747363852705534948804722977694946285824084467980932719648671881427653132560237798890704831091284824282581402136321460327924264209`
+  `:coefficient`           | `"qi"`                      | `6418005177604452063621284192917020760760169343018197265324173043944680852840291340016749637780572205101292778588212893893253264272726728304686174967313179`
+  `:otherPrimeInfos`       | N/A                         | `:asn1_NOVALUE`
+  N/A                      | `"kty"`                     | `"RSA"`
+  """
+  def int_to_bin(x) when x < 0, do: int_to_bin_neg(x, [])
+  def int_to_bin(x), do: int_to_bin_pos(x, [])
+
+  def int_to_bin_pos(0, ds = [_ | _]), do: :erlang.list_to_binary(ds)
+  def int_to_bin_pos(x, ds), do: int_to_bin_pos(:erlang.bsr(x, 8), [:erlang.band(x, 255) | ds])
+
+  def int_to_bin_neg(-1, ds = [msb | _]) when msb >= 128, do: :erlang.list_to_binary(ds)
+  def int_to_bin_neg(x, ds), do: int_to_bin_neg(:erlang.bsr(x, 8), [:erlang.band(x, 255) | ds])
+
+  def rsa_private_key_record, do: Record.extract(:RSAPrivateKey, from_lib: "public_key/include/public_key.hrl")
+end
+
+defimpl Inspect, for: JOSE.JWK do
+  @excluded [:__struct__, :__exception__]
+
+  def inspect(%JOSE.JWK{kty: kty} = struct, opts) do
+    struct = %JOSE.JWK{struct | kty: reject(kty)}
+
+    # Logic here is copied from Elixir core and simplified since we know the exact struct type
+    # See https://github.com/elixir-lang/elixir/blob/df935619d90ab08ee84fe8f16bf7cbf8e8c6fc87/lib/elixir/lib/inspect.ex#L588-L606
+    # and https://github.com/elixir-lang/elixir/blob/v1.12.0/lib/elixir/lib/inspect.ex#L440-L454
+
+    # Looks like Inspect.Map.inspect/3 was removed in elixir >= 14
+    # So we'll have to check for which version to call. See the two links above for more info.
+    if gte_elixir_14_safe?() do
+      # This might be overkill since we know what the fields in the struct are
+      # [
+      #  %{field: :keys, required: false},
+      #  %{field: :kty, required: false},
+      #  %{field: :fields, required: false}
+      # ]
+      # doing it this way does make it dynamic so that if the struct ever changes
+      # then we don't need to modify multiple places.
+      infos =
+        for %{field: field} = info <- JOSE.JWK.__info__(:struct),
+            field not in @excluded,
+            do: info
+
+      # We might want to use Inspect.Any.inspect/3 and Inspect.Any.inspect/4
+      # to display the #JOSE.JWK<> representation
+      # to indicate that fields have been removed.
+      # See: https://hexdocs.pm/elixir/1.14.2/Inspect.html#module-inspect-representation
+      struct
+      |> Inspect.Map.inspect("JOSE.JWK", infos, opts)
+    else
+      struct
+      |> Map.drop(@excluded)
+      |> Inspect.Map.inspect("JOSE.JWK", opts)
+    end
+  end
+
+  defp gte_elixir_14_safe?, do: Code.ensure_loaded?(Inspect.Map) and function_exported?(Inspect.Map, :inspect, 4)
+
+  # Pattern matching every type of key by redacting the private parts but keeping the public parts
+  defp reject({:jose_jwk_kty_rsa, {:RSAPrivateKey, version, n, e, _, _, _, _, _, _, _}} = struct) do
+    {:jose_jwk_kty_rsa, {:RSAPrivateKey, version, [redacted: :n], e, redacted: [:d, :p, :q, :dp, :dq, :qi, :otherPrimeInfos]}}
+  end
+
+  # Fallback pattern match to just redact the entire kty value
+  defp reject(_), do: :redacted
 end

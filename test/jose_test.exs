@@ -279,18 +279,18 @@ defmodule JOSETest do
   end
 
   test "JOSE.JWK display" do
-    map = %{
-      "crv" => "P-256",
-      "d" => "aJhYDBNS-5yrH97PAExzWNLlJGqJwFGZmv7iJvdG4p0",
-      "kty" => "EC",
-      "x" => "LksdLpZN3ijcn_TBfRK-_tgmvws0c5_V5k0bg14RLhU",
-      "y" => "ukc-JOEAWhW664SY5Q29xHlAVEDlrQwYF3-vQ_cdi1s"
+    jwk = JOSE.JWK.generate_key({:rsa, 1024})
+    regex = ~r/
+    %JOSE\.JWK{
+      fields:\s+%{},\s+
+      keys:\s+:undefined,\s+
+      kty:\s+
+        {:jose_jwk_kty_rsa,\s+
+          {:RSAPrivateKey,\s+:"two-prime",\s+\[redacted:\s+:n\],\s+\d+,\s+
+          \[redacted:\s+\[:d,\s+:p,\s+:q,\s+:dp,\s+:dq,\s+:qi,\s+:otherPrimeInfos\]\]}}
     }
-
-    jwk = JOSE.JWK.from_map(map)
-    stdout = inspect(jwk)
-    assert match?("#JOSE.JWK<" <> _, stdout)
-    refute String.contains?(stdout, "kty")
+    /x
+    assert String.match?(inspect(jwk), regex)
   end
 
   test "JOSE.JWS decode and encode" do
